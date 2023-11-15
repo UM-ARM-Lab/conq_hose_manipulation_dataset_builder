@@ -61,7 +61,7 @@ from PIL import Image
 def transform_step(step: Dict[str, Any]) -> Dict[str, Any]:
     """Maps step from source dataset to target dataset config.
        Input is dict of numpy arrays."""
-    img = Image.fromarray(step['observation']['hand_image_color']).resize((128, 128), Image.Resampling.LANCZOS)
+    img = Image.fromarray(step['observation']['hand_color_image']).resize((128, 128), Image.Resampling.LANCZOS)
     transformed_step = {
         'observation': {
             'image': np.array(img),
