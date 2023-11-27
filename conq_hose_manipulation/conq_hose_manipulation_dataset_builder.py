@@ -1,8 +1,6 @@
-import glob
 import pickle
 from pathlib import Path
 from typing import Iterator, Tuple, Any
-from facenet_pytorch.models.mtcnn import MTCNN
 
 import cv2
 import numpy as np
@@ -12,16 +10,17 @@ import tensorflow_hub as hub
 from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, BODY_FRAME_NAME, \
     GRAV_ALIGNED_BODY_FRAME_NAME
 from bosdyn.client.math_helpers import quat_to_eulerZYX
-from conq.cameras_utils import image_to_opencv, RGB_SOURCES
+from conq.cameras_utils import image_to_opencv, RGB_SOURCES, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
+from facenet_pytorch.models.mtcnn import MTCNN
 
 
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.0.0')
+    VERSION = tfds.core.Version('1.1.0')
     RELEASE_NOTES = {
-        '1.0.0': 'Initial release.',
+        '1.1.0': 'Initial release.',
     }
 
     def __init__(self, *args, **kwargs):
@@ -29,7 +28,7 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
         self._embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-large/5")
 
         self.mtcnn = MTCNN(
-            image_size=160, margin=0, min_face_size=20,
+            image_size=160, margin=20, min_face_size=20,
             thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True,
             device='cpu'
         )
@@ -53,13 +52,13 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                             doc='Back RGB observation.',
                         ),
                         'frontleft_fisheye_image':  tfds.features.Image(
-                            shape=(480, 640, 3),
+                            shape=(726, 604, 3),
                             dtype=np.uint8,
                             encoding_format='png',
                             doc='Front Left RGB observation.',
                         ),
                         'frontright_fisheye_image': tfds.features.Image(
-                            shape=(480, 640, 3),
+                            shape=(726, 604, 3),
                             dtype=np.uint8,
                             encoding_format='png',
                             doc='Front Right RGB observation.',
@@ -145,27 +144,49 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
 
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
-        root = Path("/home/armlab/Documents/conq_python/data/regrasping_dataset_1697817143")
-        return {
-            'train': self._generate_examples(path=str(root / 'train' / 'episode_*.pkl')),
-            'val':   self._generate_examples(path=str(root / 'val' / 'episode_*.pkl')),
-        }
+        roots = [
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700079751"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700080718"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700081021"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700082505"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700082672"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700082856"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700083298"),
+            Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700083463"),
+            Path("/home/armlab/Documents/conq_python/data/regrasping_dataset_1697817143"),
+        ]
 
-    def _generate_examples(self, path) -> Iterator[Tuple[str, Any]]:
+        episode_paths_dict = {}
+        for mode in ['train', 'val']:
+            mode_paths = []
+            for root in roots:
+                mode_path = root / mode
+                mode_paths.extend(list(mode_path.glob('episode_*.pkl')))
+            episode_paths_dict[mode] = self._generate_examples(mode_paths)
+
+        return episode_paths_dict
+
+    def _generate_examples(self, episode_paths) -> Iterator[Tuple[str, Any]]:
         """Generator of examples for each split."""
 
         def _parse_example(episode_path):
+            episode_str = str(episode_path)
             with open(episode_path, 'rb') as f:
                 data = pickle.load(f)
 
             episode = []
-            for t, step in enumerate(data):
+            skip = 2
+            for t, step in enumerate(data[::skip]):
                 # To compute we action for step, we look at the next steps' state
                 if t >= len(data) - 1:
                     next_step = step
                 else:
                     next_step = data[t + 1]
+
                 instruction = step.get('instruction', 'no instruction')
+                if instruction is None:
+                    instruction = 'no instruction'
+
                 state = step['robot_state']
                 next_state = next_step['robot_state']
                 action_vec = get_hand_delta_action_vec(data, t, state, next_state)
@@ -178,7 +199,7 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                     if res is None:
                         missing_img = True
                 if missing_img:
-                    print(f"Skipping step due to missing image in episode {path}")
+                    print(f"Skipping step due to missing image in episode {episode_path}")
 
                 # compute Kona language embedding
                 language_embedding = self._embed([instruction])[0].numpy()
@@ -190,7 +211,7 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                 for rgb_src in RGB_SOURCES:
                     res = step['images'][rgb_src]
                     rgb_np = image_to_opencv(res)
-                    blurred = self.blur_faces(rgb_np)
+                    blurred = self.blur_faces(res, rgb_np)
                     observation[rgb_src] = blurred
 
                 is_terminal = t == (len(data) - 1)
@@ -212,14 +233,11 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
             sample_i = {
                 'steps':            episode,
                 'episode_metadata': {
-                    'file_path': episode_path
+                    'file_path': episode_str
                 }
             }
 
-            return episode_path, sample_i
-
-        # create list of all examples
-        episode_paths = glob.glob(path)
+            return episode_str, sample_i
 
         # for smallish datasets, use single-thread parsing
         for sample in episode_paths:
@@ -229,33 +247,40 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
         # beam = tfds.core.lazy_imports.apache_beam
         # return (beam.Create(episode_paths) | beam.Map(_parse_example))
 
-    def blur_faces(self, rgb_np):
-        return blur_faces(self.mtcnn, rgb_np)
+    def blur_faces(self, res, rgb_np):
+        return blur_faces(self.mtcnn, res, rgb_np)
 
 
-def blur_faces(mtcnn, rgb_np):
-    boxes, probs = mtcnn.detect(rgb_np)
+def blur_faces(mtcnn, res, rgb_np):
+    angle = ROTATION_ANGLE[res.source.name]
+
+    # NOTE: this makes the face detection work much better, but it does change the size of the images!
+    rgb_np_rot = rotate_image(rgb_np, angle)
+    # print(res.source.name, rgb_np_rot.shape)
+
+    boxes, probs = mtcnn.detect(rgb_np_rot)
 
     if boxes is not None:
         # blur out the boxes
-        blurred = rgb_np.copy()
+        blurred = rgb_np_rot.copy()
         for box in boxes:
             x0, y0, x1, y1 = box.astype(int)
-            x0 = min(max(0, x0), rgb_np.shape[1])
-            x1 = min(max(0, x1), rgb_np.shape[1])
-            y0 = min(max(0, y0), rgb_np.shape[0])
-            y1 = min(max(0, y1), rgb_np.shape[0])
-            roi = rgb_np[y0:y1, x0:x1]
+            x0 = min(max(0, x0), rgb_np_rot.shape[1])
+            x1 = min(max(0, x1), rgb_np_rot.shape[1])
+            y0 = min(max(0, y0), rgb_np_rot.shape[0])
+            y1 = min(max(0, y1), rgb_np_rot.shape[0])
+            roi = rgb_np_rot[y0:y1, x0:x1]
             blurred_roi = cv2.GaussianBlur(roi, (31, 31), 0)
             blurred[y0:y1, x0:x1] = blurred_roi
 
             # draw the box
-            # rr.log('rgb', rr.Image(blurred))
+            # rr.log('blurred/img', rr.Image(blurred))
             # half_sizes = (box[2:] - box[:2])
-            # rr.log("face_box", rr.Boxes2D(mins=boxes[0][:2], sizes=half_sizes))
+            # rr.log("blurred/face_box", rr.Boxes2D(mins=box[:2], sizes=half_sizes))
             # print("detected a face!")
         return blurred
-    return rgb_np
+
+    return rgb_np_rot
 
 
 def get_hand_in_vision_action_vec(data, t, state, next_state):
@@ -334,6 +359,7 @@ def debug_conversion():
     rr.connect()
 
     root = Path("/home/armlab/Documents/conq_python/data/regrasping_dataset_1697817143")
+    root = Path("/home/armlab/Documents/conq_python/data/conq_hose_manipulation_data_1700083463")
     mode = root / 'train'
 
     mtcnn = MTCNN(
@@ -342,17 +368,20 @@ def debug_conversion():
         device='cpu', keep_all=True
     )
 
-    episode_path = mode / 'episode_9.pkl'
-    t = 377
-    rgb_src = 'left_fisheye_image'
-    with open(episode_path, 'rb') as f:
-        data = pickle.load(f)
-    step = data[t]
-    res = step['images'][rgb_src]
-    rgb_np = image_to_opencv(res)
-    blur_faces(mtcnn, rgb_np)
+    # episode_path = mode / 'episode_9.pkl'
+    # rgb_src = 'left_fisheye_image'
+    # with open(episode_path, 'rb') as f:
+    #     data = pickle.load(f)
+    #
+    # for t in range(350, 400):
+    #     step = data[t]
+    #     res = step['images'][rgb_src]
+    #     rgb_np = image_to_opencv(res)
+    #     rr.log('rgb', rr.Image(rgb_np))
+    #     blurred = blur_faces(mtcnn, res, rgb_np)
 
     for episode_path in mode.glob("episode_*.pkl"):
+        print(episode_path)
         with open(episode_path, 'rb') as f:
             data = pickle.load(f)
 
@@ -369,11 +398,28 @@ def debug_conversion():
             hand_in_vision = get_hand_in_vision_action_vec(data, t, state, next_state)
             hand_in_body_and_body_delta = get_hand_in_body_and_body_delta_action_vec(data, t, state, next_state)
 
-            for rgb_src in RGB_SOURCES:
-                res = step['images'][rgb_src]
-                rgb_np = image_to_opencv(res)
-                blur_faces(mtcnn, rgb_np)
+            # for rgb_src in RGB_SOURCES:
+            rgb_src = 'frontleft_fisheye_image'
+            res = step['images'][rgb_src]
+            rgb_np = image_to_opencv(res)
+            blurred_np = blur_faces(mtcnn, res, rgb_np)
+            # rr.log('rgb', rr.Image(blurred_np))
+
+
+def check_for_bad_pkls():
+    root = Path("/home/armlab/Documents/conq_python/data/")
+    for mode in ['train', 'val']:
+        for d in root.glob("*"):
+            for episode_path in (d / mode).glob("episode_*.pkl"):
+                try:
+                    with open(episode_path, 'rb') as f:
+                        data = pickle.load(f)
+                except (pickle.UnpicklingError, EOFError):
+                    print(f"{episode_path} is corrupt!")
+                    # rename to add ".BAD" suffix
+                    episode_path.rename(episode_path.with_suffix('.pkl.BAD'))
 
 
 if __name__ == '__main__':
+    # check_for_bad_pkls()
     debug_conversion()
