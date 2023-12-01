@@ -13,19 +13,21 @@ def main():
 
     # create TF dataset
     dataset_name = "conq_hose_manipulation"
-    print(f"Visualizing data from dataset: {dataset_name}")
+    builder = tfds.builder(dataset_name)
+    print(f"Visualizing data from dataset: {dataset_name} version: {builder.info.version}")
     ds = tfds.load(dataset_name, split='val')
 
     # visualize episodes
-    for i, episode in enumerate(ds.take(1)):
+    for i, episode in enumerate(ds.take(5)):
         for step in episode['steps']:
-            rgb_np = step['observation']['hand_color_image'].numpy()
             rr.log('instruction', rr.TextLog(step['language_instruction'].numpy().decode()))
-            rr.log('image', rr.Image(rgb_np))
+            for src in ['hand_color_image', 'frontleft_fisheye_image']:
+                rgb_np = step['observation'][src].numpy()
+                rr.log(src, rr.Image(rgb_np))
 
     # visualize action and state statistics
     actions, states = [], []
-    for episode in tqdm.tqdm(ds.take(1)):
+    for episode in tqdm.tqdm(ds.take(5)):
         for step in episode['steps']:
             actions.append(step['action'].numpy())
             states.append(step['observation']['state'].numpy())
@@ -50,6 +52,8 @@ def main():
 
     vis_stats(actions, action_mean, 'action_stats')
     vis_stats(states, state_mean, 'state_stats')
+
+    plt.show()
 
 
 if __name__ == '__main__':

@@ -222,6 +222,41 @@ def get_hand_delta_action_vec(data, t, state, next_state):
     return action_vec
 
 
+def pkl_itr():
+    root = Path("/home/armlab/Documents/conq_python/data/")
+    for mode in ['train', 'val']:
+        for d in root.glob("*"):
+            for episode_path in (d / mode).glob("episode_*.pkl"):
+                with open(episode_path, 'rb') as f:
+                    data = pickle.load(f)
+                yield episode_path, data
+
+def check_control_rate():
+    rows = []
+    for episode_path, data in pkl_itr():
+        # compute the dt between steps
+        ts = []
+        for step in data:
+            ts.append(step['time'])
+        ts = np.array(ts)
+        dts = np.diff(ts)
+        hz = 1 / dts
+
+        for hz_i in hz:
+            rows.append([str(episode_path), hz_i])
+
+    import pandas as pd
+    df = pd.DataFrame(rows, columns=['episode_path', 'hz'])
+
+    print(f"mean Hz: {df['hz'].agg('mean'):.2f}")
+    print(f"median Hz: {df['hz'].agg('median'):.2f}")
+
+    # do a simple MA filter to smooth the data and plot it
+    w = 10
+    df['hz_ma'] = df['hz'].rolling(w).mean()
+    df['hz_ma'].plot()
+
+
 def check_for_bad_pkls():
     root = Path("/home/armlab/Documents/conq_python/data/")
     for mode in ['train', 'val']:
@@ -237,5 +272,6 @@ def check_for_bad_pkls():
 
 
 if __name__ == '__main__':
-    check_for_bad_pkls()
-    main()
+    check_control_rate()
+    # check_for_bad_pkls()
+    # main()
