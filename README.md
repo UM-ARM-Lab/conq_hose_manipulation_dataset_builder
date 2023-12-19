@@ -1,3 +1,17 @@
+# Download the data
+
+## Project Website
+
+https://sites.google.com/view/conq-hose-manipulation-dataset/home
+
+## Download from AWS
+
+```
+aws s3 sync s3://conq-hose-manipulation-dataset/1.1.0/ .
+```
+
+:warning: Below are the original instructions from Karl's repo 
+
 # RLDS Dataset Conversion
 
 This repo demonstrates how to convert an existing dataset into RLDS format for X-embodiment experiment integration.
