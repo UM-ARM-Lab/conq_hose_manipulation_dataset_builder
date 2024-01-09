@@ -11,9 +11,9 @@ from facenet_pytorch.models.mtcnn import MTCNN
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.1.0')
+    VERSION = tfds.core.Version('1.3.0')
     RELEASE_NOTES = {
-        '1.1.0': 'Initial release.',
+        '1.3.0': 'trim data more',
     }
 
     def __init__(self, *args, **kwargs):
@@ -138,9 +138,10 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     def _split_generators(self, dl_manager: tfds.download.DownloadManager):
         """Define data splits."""
         episode_paths_dict = {}
+        pkls_root = Path("pkls")
         for mode in ['train', 'val']:
             mode_paths = []
-            for episode_path in Path(".").glob(f"conq_hose_manipulation_{mode}_*.pkl"):
+            for episode_path in pkls_root.glob(f"conq_hose_manipulation_{mode}_*.pkl"):
                 mode_paths.append(episode_path)
             episode_paths_dict[mode] = self._generate_examples(mode_paths)
 

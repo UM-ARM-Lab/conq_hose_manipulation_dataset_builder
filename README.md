@@ -12,6 +12,24 @@ aws s3 sync s3://conq-hose-manipulation-dataset/1.1.0/ .
 
 :warning: Below are the original instructions from Karl's repo 
 
+## Running the dataset conversion yourself
+
+The dataset exists in three phases, although you probably only care about the final one or two.
+First you need the original data, set which is stred in Pythons `.pkl` format, created by code in the [conq_python](https://github.com/UM-ARM-Lab/conq_python/blob/master/scripts/generate_conq_hose_manipulation_dataset.py) repo.
+These files are stored on the armrazer computer, and backed up on Big Narstie in `datasets/conq_hose_manipulation_raw`.
+Then, those files are run through `preprocessor.py` in this repo, and converted to `pkl` files which contain data in the format needed for Open X Embodiment.
+The pkl files are backed up in big narstie in `datasets/conq_hose_manipulation_pkls`.
+However, they're pkl files, not the tfrecord files the OXE actually uses.
+I did this because the conversion takes forever, and debugging the tfrecord code was a nightmare, so I wanted to be able to do it in two steps.
+
+When convertion the pkl files to a tfds format, you need to run `tfds build` in the `conq_hose_manipulation` directory.
+You may want to increment the dataset version first, which you can do by modifying the `VERSION` variable in `conq_hose_manipulation_dataset_builder.py`.
+In which case, you don't need to add `--overwrite`.
+
+```
+tfds build --overwrite
+```
+
 # RLDS Dataset Conversion
 
 This repo demonstrates how to convert an existing dataset into RLDS format for X-embodiment experiment integration.
