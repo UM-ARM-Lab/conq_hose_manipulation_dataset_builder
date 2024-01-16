@@ -7,7 +7,7 @@ import rerun as rr
 import tensorflow_hub as hub
 from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, BODY_FRAME_NAME, \
     GRAV_ALIGNED_BODY_FRAME_NAME
-from bosdyn.client.math_helpers import quat_to_eulerZYX
+from bosdyn.client.math_helpers import quat_to_eulerZYX, transform_se3velocity, SE3Velocity, SE3Pose, Quat
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
@@ -47,6 +47,10 @@ def preprocessor_main():
     pkls_root = Path("pkls")
     pkls_root.mkdir(exist_ok=True)
 
+    # delete the existing files in the output directory
+    for pkl_path in pkls_root.glob("*.pkl"):
+        pkl_path.unlink()
+
     episode_paths_dict = {}
     for mode in ['train', 'val']:
         mode_paths = []
@@ -59,10 +63,9 @@ def preprocessor_main():
 
     available_rgb_sources = get_first_available_rgb_sources(episode_paths_dict['train'][0])
 
-    episode_idx = 0
     rr_seq_t = 0
     all_dpos_mags = []
-    for mode, episode_paths in episode_paths_dict.items():
+    for episode_idx, (mode, episode_paths) in enumerate(episode_paths_dict.items()):
         for episode_path in tqdm(episode_paths, desc=f'{mode=}'):
             episode_str = str(episode_path)
             with open(episode_path, 'rb') as f:
@@ -88,8 +91,8 @@ def preprocessor_main():
                 # check that the hand has started moving
                 state = step['robot_state']
                 next_state = next_step['robot_state']
-                action_vec = get_hand_delta_action_vec(False, state, next_state)
-                if np.linalg.norm(action_vec[:3]) > min_dpos_start_threshold:
+                hand_delta_in_body = get_hand_delta_action_vec(False, state, next_state)
+                if np.linalg.norm(hand_delta_in_body[:3]) > min_dpos_start_threshold:
                     trim_start_idx = t + start_t_padding  # add some padding
                     break
             if trim_start_idx is None:
@@ -109,7 +112,9 @@ def preprocessor_main():
                 dt = d_seconds + d_nanos * 1e-9
                 assert dt >= 0
                 is_terminal = t >= (len(paired_steps) - 1)
-                action_vec = get_hand_delta_action_vec(is_terminal, state, next_state)
+                action_vec = get_joint_velocity_action_vec(is_terminal, state)
+                # action_vec = get_hand_velocity_in_body_action_vec(is_terminal, state)
+                # hand_delta_in_body = get_hand_delta_action_vec(is_terminal, state, next_state)
                 hand_in_vision = get_hand_in_vision_action_vec(is_terminal, state, next_state)
                 hand_in_body_and_body_delta = get_hand_in_body_and_body_delta_action_vec(is_terminal, state, next_state)
                 state_vec = get_state_vec(state)
@@ -137,11 +142,11 @@ def preprocessor_main():
                     # blurred = blur_faces(mtcnn, rgb_np_rot)
                     observation[rgb_src] = rgb_np_rot
 
-                rr.set_time_sequence('step', rr_seq_t)
-                viz_common_frames(snapshot)
-                rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
-                for rgb_src in available_rgb_sources:
-                    rr.log(rgb_src, rr.Image(observation[rgb_src]))
+                # rr.set_time_sequence('step', rr_seq_t)
+                # viz_common_frames(snapshot)
+                # rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
+                # for rgb_src in available_rgb_sources:
+                #     rr.log(rgb_src, rr.Image(observation[rgb_src]))
 
                 rr_seq_t += 1
 
@@ -173,8 +178,6 @@ def preprocessor_main():
             pkl_path = pkls_root / f"conq_hose_manipulation_{mode}_{episode_idx}.pkl"
             with pkl_path.open('wb') as f:
                 pickle.dump(sample_i, f)
-
-            episode_idx += 1
 
 
 def check_step_for_missing_images(step):
@@ -209,6 +212,48 @@ def blur_faces(mtcnn, rgb_np_rot):
         return blurred
 
     return rgb_np_rot
+
+
+def get_joint_velocity_action_vec(is_terminal, state):
+    joint_velocities = []
+    for js in state.kinematic_state.joint_states:
+        if 'arm' in js.name and js.name not in ['arm0.hr0', 'arm0.f1x']:
+            joint_velocities.append(js.velocity.value)
+            rr.log(f'joint_velocities/{js.name.replace(".", "_")}', rr.TimeSeriesScalar(js.velocity.value))
+    joint_velocities = np.array(joint_velocities)
+
+    gripper_action = state.manipulator_state.gripper_open_percentage / 100
+    action_vec = np.concatenate([joint_velocities, [gripper_action], [is_terminal]], dtype=np.float32)
+    return action_vec
+
+
+def get_hand_velocity_in_body_action_vec(is_terminal, state):
+    vel_in_vision = state.manipulator_state.velocity_of_hand_in_vision
+
+    snapshot = state.kinematic_state.transforms_snapshot
+    body_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
+
+    vel_in_body = transform_se3velocity(body_in_vision.to_adjoint_matrix(), vel_in_vision)
+    print(vel_in_vision)
+    print(vel_in_body)
+    l = SE3Velocity.from_proto(vel_in_vision).linear
+    np.sqrt(l.x ** 2 + l.y ** 2 + l.z ** 2)
+    l = SE3Velocity.from_proto(vel_in_body).linear
+    np.sqrt(l.x ** 2 + l.y ** 2 + l.z ** 2)
+    print()
+
+    vel_in_body_np = np.array([
+        vel_in_body.linear.x,
+        vel_in_body.linear.y,
+        vel_in_body.linear.z,
+        vel_in_body.angular.x,
+        vel_in_body.angular.y,
+        vel_in_body.angular.z
+    ])
+
+    gripper_action = state.manipulator_state.gripper_open_percentage / 100
+    action_vec = np.concatenate([vel_in_body_np, [gripper_action], [is_terminal]], dtype=np.float32)
+    return action_vec
 
 
 def get_hand_in_vision_action_vec(is_terminal, state, next_state):

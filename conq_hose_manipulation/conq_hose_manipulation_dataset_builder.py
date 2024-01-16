@@ -10,9 +10,9 @@ import tensorflow_hub as hub
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.7.0')
+    VERSION = tfds.core.Version('1.8.0')
     RELEASE_NOTES = {
-        '1.7.0': 'fix is_terminal/trunc/action[-1] always being 0',
+        '1.8.0': 'use joint velocities instead',
     }
 
     def __init__(self, *args, **kwargs):
@@ -73,8 +73,7 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                     'action': tfds.features.Tensor(
                         shape=(8,),
                         dtype=np.float32,
-                        doc='Robot action, consists of [3x hand delta position, '
-                            '3x hand delta roll/pitch/yaw, 1x gripper, 1x is_terminal, in the current body frame.',
+                        doc='Robot action, consists of [6x joint velocities, 1x gripper, 1x is_terminal].',
                     ),
                     'hand_in_vision': tfds.features.Tensor(
                         shape=(8,),
