@@ -5,46 +5,33 @@ from typing import Iterator, Tuple, Any
 import numpy as np
 import tensorflow_datasets as tfds
 import tensorflow_hub as hub
-from facenet_pytorch.models.mtcnn import MTCNN
 
 
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.3.0')
+    VERSION = tfds.core.Version('1.7.0')
     RELEASE_NOTES = {
-        '1.3.0': 'trim data more',
+        '1.7.0': 'fix is_terminal/trunc/action[-1] always being 0',
     }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-large/5")
 
-        self.mtcnn = MTCNN(
-            image_size=160, margin=20, min_face_size=20,
-            thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True,
-            device='cpu'
-        )
-
     def _info(self) -> tfds.core.DatasetInfo:
         """Dataset metadata (homepage, citation,...)."""
         return self.dataset_info_from_configs(
             features=tfds.features.FeaturesDict({
-                'steps':            tfds.features.Dataset({
-                    'observation':                 tfds.features.FeaturesDict({
-                        'hand_color_image':         tfds.features.Image(
+                'steps': tfds.features.Dataset({
+                    'observation': tfds.features.FeaturesDict({
+                        'hand_color_image': tfds.features.Image(
                             shape=(480, 640, 3),
                             dtype=np.uint8,
                             encoding_format='png',
                             doc='Hand camera RGB observation.',
                         ),
-                        'back_fisheye_image':       tfds.features.Image(
-                            shape=(480, 640, 3),
-                            dtype=np.uint8,
-                            encoding_format='png',
-                            doc='Back RGB observation.',
-                        ),
-                        'frontleft_fisheye_image':  tfds.features.Image(
+                        'frontleft_fisheye_image': tfds.features.Image(
                             shape=(726, 604, 3),
                             dtype=np.uint8,
                             encoding_format='png',
@@ -56,19 +43,25 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                             encoding_format='png',
                             doc='Front Right RGB observation.',
                         ),
-                        'left_fisheye_image':       tfds.features.Image(
-                            shape=(480, 640, 3),
-                            dtype=np.uint8,
-                            encoding_format='png',
-                            doc='Left RGB observation.',
-                        ),
-                        'right_fisheye_image':      tfds.features.Image(
-                            shape=(480, 640, 3),
-                            dtype=np.uint8,
-                            encoding_format='png',
-                            doc='Right RGB observation.',
-                        ),
-                        'state':                    tfds.features.Tensor(
+                        # 'left_fisheye_image': tfds.features.Image(
+                        #     shape=(480, 640, 3),
+                        #     dtype=np.uint8,
+                        #     encoding_format='png',
+                        #     doc='Left RGB observation.',
+                        # ),
+                        # 'right_fisheye_image': tfds.features.Image(
+                        #     shape=(480, 640, 3),
+                        #     dtype=np.uint8,
+                        #     encoding_format='png',
+                        #     doc='Right RGB observation.',
+                        # ),
+                        # 'back_fisheye_image': tfds.features.Image(
+                        #     shape=(480, 640, 3),
+                        #     dtype=np.uint8,
+                        #     encoding_format='png',
+                        #     doc='Back RGB observation.',
+                        # ),
+                        'state': tfds.features.Tensor(
                             shape=(66,),
                             dtype=np.float32,
                             doc='Concatenation of [joint states (2x: 20), body vel in vision (3 lin, 3 ang),'
@@ -77,13 +70,13 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                                 'See bosdyn protos for details.',
                         )
                     }),
-                    'action':                      tfds.features.Tensor(
+                    'action': tfds.features.Tensor(
                         shape=(8,),
                         dtype=np.float32,
                         doc='Robot action, consists of [3x hand delta position, '
                             '3x hand delta roll/pitch/yaw, 1x gripper, 1x is_terminal, in the current body frame.',
                     ),
-                    'hand_in_vision':              tfds.features.Tensor(
+                    'hand_in_vision': tfds.features.Tensor(
                         shape=(8,),
                         dtype=np.float32,
                         doc='Robot action, consists of [3x hand absolute position, '
@@ -98,30 +91,30 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                             '3x body delta roll/pitch/yaw, '
                             '1x gripper, 1x is_terminal, in current body frame.',
                     ),
-                    'discount':                    tfds.features.Scalar(
+                    'discount': tfds.features.Scalar(
                         dtype=np.float32,
                         doc='Discount if provided, default to 1.'
                     ),
-                    'reward':                      tfds.features.Scalar(
+                    'reward': tfds.features.Scalar(
                         dtype=np.float32,
                         doc='Reward if provided, 1 on final step for demos.'
                     ),
-                    'is_first':                    tfds.features.Scalar(
+                    'is_first': tfds.features.Scalar(
                         dtype=np.bool_,
                         doc='True on first step of the episode.'
                     ),
-                    'is_last':                     tfds.features.Scalar(
+                    'is_last': tfds.features.Scalar(
                         dtype=np.bool_,
                         doc='True on last step of the episode.'
                     ),
-                    'is_terminal':                 tfds.features.Scalar(
+                    'is_terminal': tfds.features.Scalar(
                         dtype=np.bool_,
                         doc='True on last step of the episode if it is a terminal step, True for demos.'
                     ),
-                    'language_instruction':        tfds.features.Text(
+                    'language_instruction': tfds.features.Text(
                         doc='Language Instruction.'
                     ),
-                    'language_embedding':          tfds.features.Tensor(
+                    'language_embedding': tfds.features.Tensor(
                         shape=(512,),
                         dtype=np.float32,
                         doc='Kona language embedding. '

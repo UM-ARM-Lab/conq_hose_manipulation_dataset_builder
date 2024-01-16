@@ -8,10 +8,10 @@ import tensorflow_hub as hub
 from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, BODY_FRAME_NAME, \
     GRAV_ALIGNED_BODY_FRAME_NAME
 from bosdyn.client.math_helpers import quat_to_eulerZYX
-from facenet_pytorch.models.mtcnn import MTCNN
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from conq.cameras_utils import image_to_opencv, RGB_SOURCES, ROTATION_ANGLE, rotate_image
+from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
 from conq.rerun_utils import viz_common_frames
 
@@ -23,10 +23,17 @@ def pairwise_steps(data):
         t += 1
 
 
+def get_first_available_rgb_sources(episode_path):
+    with open(episode_path, 'rb') as f:
+        data = pickle.load(f)
+    return list(data[0]['images'].keys())
+
+
 def preprocessor_main():
     rr.init('preprocesser')
     rr.connect()
 
+    # from facenet_pytorch.models.mtcnn import MTCNN
     # mtcnn = MTCNN(
     #     image_size=160, margin=20, min_face_size=20,
     #     thresholds=[0.6, 0.7, 0.7], factor=0.709, post_process=True,
@@ -34,18 +41,8 @@ def preprocessor_main():
     # )
     _embed = hub.load("https://tfhub.dev/google/universal-sentence-encoder-large/5")
 
-    root_root = Path("~/conq_hose_manipulation_raw").expanduser()
-    roots = [
-        root_root / "conq_hose_manipulation_data_1700079751",
-        root_root / "conq_hose_manipulation_data_1700080718",
-        root_root / "conq_hose_manipulation_data_1700081021",
-        root_root / "conq_hose_manipulation_data_1700082505",
-        root_root / "conq_hose_manipulation_data_1700082672",
-        root_root / "conq_hose_manipulation_data_1700082856",
-        root_root / "conq_hose_manipulation_data_1700083298",
-        root_root / "conq_hose_manipulation_data_1700083463",
-        root_root / "regrasping_dataset_1697817143",
-    ]
+    root_root = Path("~/Documents/octo_ws/conq_python/data").expanduser()
+    roots = list(root_root.iterdir())
 
     pkls_root = Path("pkls")
     pkls_root.mkdir(exist_ok=True)
@@ -54,9 +51,13 @@ def preprocessor_main():
     for mode in ['train', 'val']:
         mode_paths = []
         for root in roots:
+            if (root / 'unsorted').exists():
+                print(f"Skipping unsorted data in {root}")
             mode_path = root / mode
             mode_paths.extend(list(mode_path.glob('episode_*.pkl')))
         episode_paths_dict[mode] = mode_paths
+
+    available_rgb_sources = get_first_available_rgb_sources(episode_paths_dict['train'][0])
 
     episode_idx = 0
     rr_seq_t = 0
@@ -78,7 +79,9 @@ def preprocessor_main():
                 continue
 
             # Downsample and trim the start & end of the data
-            downsample_n = 4
+            downsample_n = 1
+            min_dpos_start_threshold = 0.005
+            start_t_padding = 0
             data_subsampled = data[::downsample_n]
             trim_start_idx = None
             for t, step, next_step in pairwise_steps(data_subsampled):
@@ -86,15 +89,18 @@ def preprocessor_main():
                 state = step['robot_state']
                 next_state = next_step['robot_state']
                 action_vec = get_hand_delta_action_vec(False, state, next_state)
-                if trim_start_idx is None and np.linalg.norm(action_vec[:3]) > 0.01:
-                    trim_start_idx = t + 20  # add some padding
+                if np.linalg.norm(action_vec[:3]) > min_dpos_start_threshold:
+                    trim_start_idx = t + start_t_padding  # add some padding
+                    break
             if trim_start_idx is None:
                 print(f"Skipping episode {episode_path} because the hand never moved!")
                 continue
-            trim_end_idx = len(data_subsampled)
+            trim_end_idx = len(data_subsampled) + 1
 
             data_trimmed = data_subsampled[trim_start_idx:trim_end_idx]
-            for t, step, next_step in pairwise_steps(data_trimmed):
+            paired_steps = list(pairwise_steps(data_trimmed))
+            is_terminal = False
+            for t, step, next_step in paired_steps:
                 state = step['robot_state']
                 next_state = next_step['robot_state']
                 d_seconds = next_state.kinematic_state.acquisition_timestamp.seconds - state.kinematic_state.acquisition_timestamp.seconds
@@ -102,17 +108,15 @@ def preprocessor_main():
                 d_nanos = next_state.kinematic_state.acquisition_timestamp.nanos - state.kinematic_state.acquisition_timestamp.nanos
                 dt = d_seconds + d_nanos * 1e-9
                 assert dt >= 0
-                is_terminal = t >= (len(data) - 1)
+                is_terminal = t >= (len(paired_steps) - 1)
                 action_vec = get_hand_delta_action_vec(is_terminal, state, next_state)
                 hand_in_vision = get_hand_in_vision_action_vec(is_terminal, state, next_state)
                 hand_in_body_and_body_delta = get_hand_in_body_and_body_delta_action_vec(is_terminal, state, next_state)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
-                viz_common_frames(snapshot)
                 dpos_mag = np.linalg.norm(action_vec[:3])
                 all_dpos_mags.append(dpos_mag)
-                rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
 
                 missing_img = check_step_for_missing_images(step)
                 if missing_img:
@@ -123,15 +127,21 @@ def preprocessor_main():
 
                 observation = {'state': state_vec, }
 
-                for rgb_src in RGB_SOURCES:
+                for rgb_src in available_rgb_sources:
                     res = step['images'][rgb_src]
                     rgb_np = image_to_opencv(res)
                     angle = ROTATION_ANGLE[res.source.name]
                     # NOTE: this makes the face detection work much better, but it does change the size of the images!
                     rgb_np_rot = rotate_image(rgb_np, angle)
-                    # blurred = blur_faces(mtcnn, rgb_np_rot)
                     # FIXME: not blurring while I'm debugging because it is slow
+                    # blurred = blur_faces(mtcnn, rgb_np_rot)
                     observation[rgb_src] = rgb_np_rot
+
+                rr.set_time_sequence('step', rr_seq_t)
+                viz_common_frames(snapshot)
+                rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
+                for rgb_src in available_rgb_sources:
+                    rr.log(rgb_src, rr.Image(observation[rgb_src]))
 
                 rr_seq_t += 1
 
@@ -141,7 +151,7 @@ def preprocessor_main():
                     'hand_in_vision': hand_in_vision,
                     'hand_in_body_and_body_delta': hand_in_body_and_body_delta,
                     'discount': 1.0,
-                    'reward': float(t == (len(data) - 1)),
+                    'reward': float(is_terminal),
                     'is_first': t == 0,
                     'is_last': is_terminal,
                     'is_terminal': is_terminal,
@@ -149,8 +159,7 @@ def preprocessor_main():
                     'language_embedding': language_embedding,
                 })
 
-                if is_terminal:
-                    break
+            assert is_terminal, "The last step should be terminal!"
 
             # create output data sample
             sample_i = {
@@ -258,6 +267,9 @@ def get_hand_delta_action_vec(is_terminal, state, next_state):
     next_hand_in_body = vision2base * next_hand_in_vision
     delta_hand_in_body = hand_in_body.inverse() * next_hand_in_body
 
+    # NOTE: this will only grab very gently, because we're reading where the gripper _IS_ which is not the same
+    # as where it was being commanded (e.g. fully closed), which might be what we actually want.
+    # TODO: possibly make the data_recorder record the commanded gripper position?
     gripper_action = state.manipulator_state.gripper_open_percentage / 100
     ee_pos = [delta_hand_in_body.x, delta_hand_in_body.y, delta_hand_in_body.z]
     euler_zyx = quat_to_eulerZYX(delta_hand_in_body.rotation)
@@ -268,7 +280,7 @@ def get_hand_delta_action_vec(is_terminal, state, next_state):
 
 
 def pkl_itr():
-    root = Path("~/Documents/conq_python/data/").expanduser()
+    root = Path("/home/pmitrano/Documents/octo_ws/conq_python/data/")
     for mode in ['train', 'val']:
         for d in root.glob("*"):
             for episode_path in (d / mode).glob("episode_*.pkl"):
@@ -301,23 +313,34 @@ def check_control_rate():
     w = 10
     df['hz_ma'] = df['hz'].rolling(w).mean()
     df['hz_ma'].plot()
+    plt.show()
+
+
+def change_instruction(new_instruction):
+    for episode_path, data in pkl_itr():
+        with open(episode_path, 'rb') as f:
+            data = pickle.load(f)
+
+        for step in data:
+            step['instruction'] = new_instruction
+
+        with open(episode_path, 'wb') as f:
+            pickle.dump(data, f)
 
 
 def check_for_bad_pkls():
-    root = Path("/home/armlab/Documents/conq_python/data/")
-    for mode in ['train', 'val']:
-        for d in root.glob("*"):
-            for episode_path in (d / mode).glob("episode_*.pkl"):
-                try:
-                    with open(episode_path, 'rb') as f:
-                        data = pickle.load(f)
-                except (pickle.UnpicklingError, EOFError):
-                    print(f"{episode_path} is corrupt!")
-                    # rename to add ".BAD" suffix
-                    episode_path.rename(episode_path.with_suffix('.pkl.BAD'))
+    for episode_path, data in pkl_itr():
+        try:
+            with open(episode_path, 'rb') as f:
+                data = pickle.load(f)
+        except (pickle.UnpicklingError, EOFError):
+            print(f"{episode_path} is corrupt!")
+            # rename to add ".BAD" suffix
+            episode_path.rename(episode_path.with_suffix('.pkl.BAD'))
 
 
 if __name__ == '__main__':
+    # change_instruction("grasp hose")
     # check_control_rate()
     # check_for_bad_pkls()
     preprocessor_main()
