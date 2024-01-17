@@ -13,7 +13,7 @@ from tqdm import tqdm
 
 from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
-from conq.rerun_utils import viz_common_frames
+from conq.rerun_utils import viz_common_frames, rr_tform
 
 
 def pairwise_steps(data):
@@ -65,7 +65,8 @@ def preprocessor_main():
 
     rr_seq_t = 0
     all_dpos_mags = []
-    for episode_idx, (mode, episode_paths) in enumerate(episode_paths_dict.items()):
+    episode_idx = 0
+    for mode, episode_paths in episode_paths_dict.items():
         for episode_path in tqdm(episode_paths, desc=f'{mode=}'):
             episode_str = str(episode_path)
             with open(episode_path, 'rb') as f:
@@ -101,22 +102,14 @@ def preprocessor_main():
             trim_end_idx = len(data_subsampled) + 1
 
             data_trimmed = data_subsampled[trim_start_idx:trim_end_idx]
-            paired_steps = list(pairwise_steps(data_trimmed))
             is_terminal = False
-            for t, step, next_step in paired_steps:
+            for t, step in enumerate(data_trimmed):
                 state = step['robot_state']
-                next_state = next_step['robot_state']
-                d_seconds = next_state.kinematic_state.acquisition_timestamp.seconds - state.kinematic_state.acquisition_timestamp.seconds
-                assert d_seconds >= 0
-                d_nanos = next_state.kinematic_state.acquisition_timestamp.nanos - state.kinematic_state.acquisition_timestamp.nanos
-                dt = d_seconds + d_nanos * 1e-9
-                assert dt >= 0
-                is_terminal = t >= (len(paired_steps) - 1)
-                action_vec = get_joint_velocity_action_vec(is_terminal, state)
-                # action_vec = get_hand_velocity_in_body_action_vec(is_terminal, state)
-                # hand_delta_in_body = get_hand_delta_action_vec(is_terminal, state, next_state)
-                hand_in_vision = get_hand_in_vision_action_vec(is_terminal, state, next_state)
-                hand_in_body_and_body_delta = get_hand_in_body_and_body_delta_action_vec(is_terminal, state, next_state)
+                action = step['action']
+                target_open_fraction = action['open_fraction']
+                target_hand_in_vision = action['target_hand_in_vision']
+                is_terminal = t >= (len(data_trimmed) - 1)
+                action_vec = get_hand_delta_action_vec(is_terminal, state)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
@@ -142,19 +135,18 @@ def preprocessor_main():
                     # blurred = blur_faces(mtcnn, rgb_np_rot)
                     observation[rgb_src] = rgb_np_rot
 
-                # rr.set_time_sequence('step', rr_seq_t)
-                # viz_common_frames(snapshot)
-                # rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
-                # for rgb_src in available_rgb_sources:
-                #     rr.log(rgb_src, rr.Image(observation[rgb_src]))
+                rr.set_time_sequence('step', rr_seq_t)
+                viz_common_frames(snapshot)
+                rr_tform('target_hand_in_vision', target_hand_in_vision)
+                rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
+                for rgb_src in available_rgb_sources:
+                    rr.log(rgb_src, rr.Image(observation[rgb_src]))
 
                 rr_seq_t += 1
 
                 episode.append({
                     'observation': observation,
                     'action': action_vec,
-                    'hand_in_vision': hand_in_vision,
-                    'hand_in_body_and_body_delta': hand_in_body_and_body_delta,
                     'discount': 1.0,
                     'reward': float(is_terminal),
                     'is_first': t == 0,
@@ -178,6 +170,8 @@ def preprocessor_main():
             pkl_path = pkls_root / f"conq_hose_manipulation_{mode}_{episode_idx}.pkl"
             with pkl_path.open('wb') as f:
                 pickle.dump(sample_i, f)
+
+            episode_idx += 1
 
 
 def check_step_for_missing_images(step):
@@ -386,6 +380,6 @@ def check_for_bad_pkls():
 
 if __name__ == '__main__':
     # change_instruction("grasp hose")
-    # check_control_rate()
+    check_control_rate()
     # check_for_bad_pkls()
     preprocessor_main()

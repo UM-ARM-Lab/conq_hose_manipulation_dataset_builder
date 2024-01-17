@@ -75,21 +75,6 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                         dtype=np.float32,
                         doc='Robot action, consists of [6x joint velocities, 1x gripper, 1x is_terminal].',
                     ),
-                    'hand_in_vision': tfds.features.Tensor(
-                        shape=(8,),
-                        dtype=np.float32,
-                        doc='Robot action, consists of [3x hand absolute position, '
-                            '3x hand absolute roll/pitch/yaw, 1x gripper, 1x is_terminal, in VISION_FRAME_NAME.',
-                    ),
-                    'hand_in_body_and_body_delta': tfds.features.Tensor(
-                        shape=(14,),
-                        dtype=np.float32,
-                        doc='Robot action, consists of [3x hand absolute position, '
-                            '3x hand absolute roll/pitch/yaw, '
-                            '3x body delta position, '
-                            '3x body delta roll/pitch/yaw, '
-                            '1x gripper, 1x is_terminal, in current body frame.',
-                    ),
                     'discount': tfds.features.Scalar(
                         dtype=np.float32,
                         doc='Discount if provided, default to 1.'
