@@ -10,9 +10,9 @@ import tensorflow_hub as hub
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.8.0')
+    VERSION = tfds.core.Version('1.9.0')
     RELEASE_NOTES = {
-        '1.8.0': 'use joint velocities instead',
+        '1.9.0': 'use joint velocities instead',
     }
 
     def __init__(self, *args, **kwargs):

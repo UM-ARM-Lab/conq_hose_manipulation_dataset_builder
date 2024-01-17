@@ -5,15 +5,13 @@ import cv2
 import numpy as np
 import rerun as rr
 import tensorflow_hub as hub
-from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, BODY_FRAME_NAME, \
-    GRAV_ALIGNED_BODY_FRAME_NAME
-from bosdyn.client.math_helpers import quat_to_eulerZYX, transform_se3velocity, SE3Velocity, SE3Pose, Quat
-from matplotlib import pyplot as plt
-from tqdm import tqdm
-
+from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, GRAV_ALIGNED_BODY_FRAME_NAME
+from bosdyn.client.math_helpers import quat_to_eulerZYX
 from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
 from conq.rerun_utils import viz_common_frames, rr_tform
+from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 
 def pairwise_steps(data):
@@ -238,6 +236,7 @@ def check_control_rate():
     w = 10
     df['hz_ma'] = df['hz'].rolling(w).mean()
     df['hz_ma'].plot()
+    plt.ylim([0, 20])
     plt.show()
 
 
