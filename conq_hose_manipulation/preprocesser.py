@@ -82,34 +82,14 @@ def preprocessor_main():
             elif instruction is None:
                 continue
 
-            # Downsample and trim the start & end of the data
-            downsample_n = 1
-            min_dpos_start_threshold = 0.005
-            start_t_padding = 0
-            data_subsampled = data[::downsample_n]
-            trim_start_idx = None
-            for t, step, next_step in pairwise_steps(data_subsampled):
-                # check that the hand has started moving
-                state = step['robot_state']
-                next_state = next_step['robot_state']
-                hand_delta_in_body = get_hand_delta_action_vec(False, state, next_state)
-                if np.linalg.norm(hand_delta_in_body[:3]) > min_dpos_start_threshold:
-                    trim_start_idx = t + start_t_padding  # add some padding
-                    break
-            if trim_start_idx is None:
-                print(f"Skipping episode {episode_path} because the hand never moved!")
-                continue
-            trim_end_idx = len(data_subsampled) + 1
-
-            data_trimmed = data_subsampled[trim_start_idx:trim_end_idx]
             is_terminal = False
-            for t, step in enumerate(data_trimmed):
+            for t, step in enumerate(data):
                 state = step['robot_state']
                 action = step['action']
                 target_open_fraction = action['open_fraction']
                 target_hand_in_vision = action['target_hand_in_vision']
-                is_terminal = t >= (len(data_trimmed) - 1)
-                action_vec = get_hand_delta_action_vec(is_terminal, state)
+                is_terminal = t >= (len(data) - 1)
+                action_vec = get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
@@ -208,112 +188,18 @@ def blur_faces(mtcnn, rgb_np_rot):
     return rgb_np_rot
 
 
-def get_joint_velocity_action_vec(is_terminal, state):
-    joint_velocities = []
-    for js in state.kinematic_state.joint_states:
-        if 'arm' in js.name and js.name not in ['arm0.hr0', 'arm0.f1x']:
-            joint_velocities.append(js.velocity.value)
-            rr.log(f'joint_velocities/{js.name.replace(".", "_")}', rr.TimeSeriesScalar(js.velocity.value))
-    joint_velocities = np.array(joint_velocities)
-
-    gripper_action = state.manipulator_state.gripper_open_percentage / 100
-    action_vec = np.concatenate([joint_velocities, [gripper_action], [is_terminal]], dtype=np.float32)
-    return action_vec
-
-
-def get_hand_velocity_in_body_action_vec(is_terminal, state):
-    vel_in_vision = state.manipulator_state.velocity_of_hand_in_vision
-
+def get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction):
     snapshot = state.kinematic_state.transforms_snapshot
-    body_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
-
-    vel_in_body = transform_se3velocity(body_in_vision.to_adjoint_matrix(), vel_in_vision)
-    print(vel_in_vision)
-    print(vel_in_body)
-    l = SE3Velocity.from_proto(vel_in_vision).linear
-    np.sqrt(l.x ** 2 + l.y ** 2 + l.z ** 2)
-    l = SE3Velocity.from_proto(vel_in_body).linear
-    np.sqrt(l.x ** 2 + l.y ** 2 + l.z ** 2)
-    print()
-
-    vel_in_body_np = np.array([
-        vel_in_body.linear.x,
-        vel_in_body.linear.y,
-        vel_in_body.linear.z,
-        vel_in_body.angular.x,
-        vel_in_body.angular.y,
-        vel_in_body.angular.z
-    ])
-
-    gripper_action = state.manipulator_state.gripper_open_percentage / 100
-    action_vec = np.concatenate([vel_in_body_np, [gripper_action], [is_terminal]], dtype=np.float32)
-    return action_vec
-
-
-def get_hand_in_vision_action_vec(is_terminal, state, next_state):
-    next_snapshot = next_state.kinematic_state.transforms_snapshot
-    next_hand_in_vision = get_a_tform_b(next_snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
-
-    gripper_action = state.manipulator_state.gripper_open_percentage / 100
-    ee_pos = [next_hand_in_vision.x, next_hand_in_vision.y, next_hand_in_vision.z]
-    try:
-        euler_zyx = quat_to_eulerZYX(next_hand_in_vision.rotation)
-    except ValueError:
-        print('Bad rotation!!!', next_hand_in_vision.rotation)
-        euler_zyx = [0, 0, 0]
-    ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
-    action_vec = np.concatenate([ee_pos, ee_rpy, [gripper_action], [is_terminal]], dtype=np.float32)
-    return action_vec
-
-
-def get_hand_in_body_and_body_delta_action_vec(is_terminal, state, next_state):
-    snapshot = state.kinematic_state.transforms_snapshot
-    next_snapshot = next_state.kinematic_state.transforms_snapshot
-    next_hand_in_body = get_a_tform_b(next_snapshot, BODY_FRAME_NAME, HAND_FRAME_NAME)
-    body_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
-    next_body_in_vision = get_a_tform_b(next_snapshot, VISION_FRAME_NAME, BODY_FRAME_NAME)
-    # Transform next_body_in_vision into the body frame of the current state
-    body_delta = body_in_vision.inverse() * next_body_in_vision
-
-    gripper_action = state.manipulator_state.gripper_open_percentage / 100
-    # absolute, not delta
-    hand_in_body_pos = [next_hand_in_body.x, next_hand_in_body.y, next_hand_in_body.z]
-    # delta
-    body_delta_pos = [body_delta.x, body_delta.y, body_delta.z]
-    hand_in_body_zyx = quat_to_eulerZYX(next_hand_in_body.rotation)
-    body_delta_zyx = quat_to_eulerZYX(body_delta.rotation)
-    hand_in_body_rpy = [hand_in_body_zyx[2], hand_in_body_zyx[1], hand_in_body_zyx[0]]
-    body_delta_rpy = [body_delta_zyx[2], body_delta_zyx[1], body_delta_zyx[0]]
-    action_vec = np.concatenate([
-        hand_in_body_pos,
-        hand_in_body_rpy,
-        body_delta_pos,
-        body_delta_rpy,
-        [gripper_action],
-        [is_terminal]
-
-    ], dtype=np.float32)
-    return action_vec
-
-
-def get_hand_delta_action_vec(is_terminal, state, next_state):
-    snapshot = state.kinematic_state.transforms_snapshot
-    next_snapshot = next_state.kinematic_state.transforms_snapshot
     hand_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
-    next_hand_in_vision = get_a_tform_b(next_snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
     vision2base = get_a_tform_b(snapshot, GRAV_ALIGNED_BODY_FRAME_NAME, VISION_FRAME_NAME)
     hand_in_body = vision2base * hand_in_vision
-    next_hand_in_body = vision2base * next_hand_in_vision
-    delta_hand_in_body = hand_in_body.inverse() * next_hand_in_body
+    target_hand_in_body = vision2base * target_hand_in_vision
+    delta_hand_in_body = hand_in_body.inverse() * target_hand_in_body
 
-    # NOTE: this will only grab very gently, because we're reading where the gripper _IS_ which is not the same
-    # as where it was being commanded (e.g. fully closed), which might be what we actually want.
-    # TODO: possibly make the data_recorder record the commanded gripper position?
-    gripper_action = state.manipulator_state.gripper_open_percentage / 100
     ee_pos = [delta_hand_in_body.x, delta_hand_in_body.y, delta_hand_in_body.z]
     euler_zyx = quat_to_eulerZYX(delta_hand_in_body.rotation)
     ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
-    action_vec = np.concatenate([ee_pos, ee_rpy, [gripper_action], [is_terminal]], dtype=np.float32)
+    action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction], [is_terminal]], dtype=np.float32)
 
     return action_vec
 
