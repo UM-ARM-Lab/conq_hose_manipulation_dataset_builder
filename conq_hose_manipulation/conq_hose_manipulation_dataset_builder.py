@@ -10,9 +10,9 @@ import tensorflow_hub as hub
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.9.0')
+    VERSION = tfds.core.Version('1.10.0')
     RELEASE_NOTES = {
-        '1.9.0': 'use joint velocities instead',
+        '1.10.0': 'use delta actions recorded from actual actions, not backed-out from state. >50 demos now',
     }
 
     def __init__(self, *args, **kwargs):
@@ -43,24 +43,6 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                             encoding_format='png',
                             doc='Front Right RGB observation.',
                         ),
-                        # 'left_fisheye_image': tfds.features.Image(
-                        #     shape=(480, 640, 3),
-                        #     dtype=np.uint8,
-                        #     encoding_format='png',
-                        #     doc='Left RGB observation.',
-                        # ),
-                        # 'right_fisheye_image': tfds.features.Image(
-                        #     shape=(480, 640, 3),
-                        #     dtype=np.uint8,
-                        #     encoding_format='png',
-                        #     doc='Right RGB observation.',
-                        # ),
-                        # 'back_fisheye_image': tfds.features.Image(
-                        #     shape=(480, 640, 3),
-                        #     dtype=np.uint8,
-                        #     encoding_format='png',
-                        #     doc='Back RGB observation.',
-                        # ),
                         'state': tfds.features.Tensor(
                             shape=(66,),
                             dtype=np.float32,

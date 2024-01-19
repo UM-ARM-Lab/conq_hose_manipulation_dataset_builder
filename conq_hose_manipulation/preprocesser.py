@@ -1,4 +1,5 @@
 import pickle
+import time
 from pathlib import Path
 
 import cv2
@@ -28,6 +29,7 @@ def get_first_available_rgb_sources(episode_path):
 
 
 def preprocessor_main():
+    np.set_printoptions(precision=4, suppress=True, linewidth=220)
     rr.init('preprocesser')
     rr.connect()
 
@@ -85,9 +87,18 @@ def preprocessor_main():
                 state = step['robot_state']
                 action = step['action']
                 target_open_fraction = action['open_fraction']
-                target_hand_in_vision = action['target_hand_in_vision']
+                target_hand_in_body = action['target_hand_in_body']
                 is_terminal = t >= (len(data) - 1)
-                action_vec = get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction)
+                action_vec = np.array([target_hand_in_body.x,
+                                             target_hand_in_body.y,
+                                             target_hand_in_body.z,
+                                             target_hand_in_body.rotation.x,
+                                             target_hand_in_body.rotation.y,
+                                             target_hand_in_body.rotation.z,
+                                             target_hand_in_body.rotation.w,
+                                             target_open_fraction,
+                                             is_terminal], dtype=np.float32)
+                # action_vec = get_hand_delta_action_vec(is_terminal, state, target_hand_in_body, target_open_fraction)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
@@ -115,7 +126,7 @@ def preprocessor_main():
 
                 rr.set_time_sequence('step', rr_seq_t)
                 viz_common_frames(snapshot)
-                rr_tform('target_hand_in_vision', target_hand_in_vision)
+                rr_tform('target_hand_in_body', target_hand_in_body)
                 rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
                 for rgb_src in available_rgb_sources:
                     rr.log(rgb_src, rr.Image(observation[rgb_src]))
@@ -150,6 +161,7 @@ def preprocessor_main():
                 pickle.dump(sample_i, f)
 
             episode_idx += 1
+            # raise SystemExit()
 
 
 def check_step_for_missing_images(step):
@@ -191,11 +203,15 @@ def get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_
     hand_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
     vision2base = get_a_tform_b(snapshot, GRAV_ALIGNED_BODY_FRAME_NAME, VISION_FRAME_NAME)
     hand_in_body = vision2base * hand_in_vision
-    target_hand_in_body = vision2base * target_hand_in_vision
-    delta_hand_in_body = hand_in_body.inverse() * target_hand_in_body
+    # target_hand_in_body = vision2base * target_hand_in_vision
+    # delta_hand_in_body = hand_in_body.inverse() * target_hand_in_body
 
-    ee_pos = [delta_hand_in_body.x, delta_hand_in_body.y, delta_hand_in_body.z]
-    euler_zyx = quat_to_eulerZYX(delta_hand_in_body.rotation)
+    # print(f"{target_hand_in_body.x:.4f} {target_hand_in_body.y:.4f} {target_hand_in_body.z:.4f}")
+
+    # ee_pos = [delta_hand_in_body.x, delta_hand_in_body.y, delta_hand_in_body.z]
+    # euler_zyx = quat_to_eulerZYX(delta_hand_in_body.rotation)
+    ee_pos = [hand_in_body.x, hand_in_body.y, hand_in_body.z]
+    euler_zyx = quat_to_eulerZYX(hand_in_body.rotation)
     ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
     action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction], [is_terminal]], dtype=np.float32)
 
@@ -265,6 +281,6 @@ def check_for_bad_pkls():
 
 if __name__ == '__main__':
     # change_instruction("grasp hose")
-    check_control_rate()
+    # check_control_rate()
     # check_for_bad_pkls()
     preprocessor_main()
