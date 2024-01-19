@@ -1,25 +1,15 @@
 import pickle
-import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 import rerun as rr
 import tensorflow_hub as hub
-from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, GRAV_ALIGNED_BODY_FRAME_NAME
-from bosdyn.client.math_helpers import quat_to_eulerZYX
 from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
 from conq.rerun_utils import viz_common_frames, rr_tform
 from matplotlib import pyplot as plt
 from tqdm import tqdm
-
-
-def pairwise_steps(data):
-    t = 0
-    for i in range(len(data) - 1):
-        yield t, data[i], data[i + 1]
-        t += 1
 
 
 def get_first_available_rgb_sources(episode_path):
@@ -90,15 +80,14 @@ def preprocessor_main():
                 target_hand_in_body = action['target_hand_in_body']
                 is_terminal = t >= (len(data) - 1)
                 action_vec = np.array([target_hand_in_body.x,
-                                             target_hand_in_body.y,
-                                             target_hand_in_body.z,
-                                             target_hand_in_body.rotation.x,
-                                             target_hand_in_body.rotation.y,
-                                             target_hand_in_body.rotation.z,
-                                             target_hand_in_body.rotation.w,
-                                             target_open_fraction,
-                                             is_terminal], dtype=np.float32)
-                # action_vec = get_hand_delta_action_vec(is_terminal, state, target_hand_in_body, target_open_fraction)
+                                       target_hand_in_body.y,
+                                       target_hand_in_body.z,
+                                       target_hand_in_body.rotation.w,
+                                       target_hand_in_body.rotation.x,
+                                       target_hand_in_body.rotation.y,
+                                       target_hand_in_body.rotation.z,
+                                       target_open_fraction,
+                                       is_terminal], dtype=np.float32)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
@@ -196,26 +185,6 @@ def blur_faces(mtcnn, rgb_np_rot):
         return blurred
 
     return rgb_np_rot
-
-
-def get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction):
-    snapshot = state.kinematic_state.transforms_snapshot
-    hand_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
-    vision2base = get_a_tform_b(snapshot, GRAV_ALIGNED_BODY_FRAME_NAME, VISION_FRAME_NAME)
-    hand_in_body = vision2base * hand_in_vision
-    # target_hand_in_body = vision2base * target_hand_in_vision
-    # delta_hand_in_body = hand_in_body.inverse() * target_hand_in_body
-
-    # print(f"{target_hand_in_body.x:.4f} {target_hand_in_body.y:.4f} {target_hand_in_body.z:.4f}")
-
-    # ee_pos = [delta_hand_in_body.x, delta_hand_in_body.y, delta_hand_in_body.z]
-    # euler_zyx = quat_to_eulerZYX(delta_hand_in_body.rotation)
-    ee_pos = [hand_in_body.x, hand_in_body.y, hand_in_body.z]
-    euler_zyx = quat_to_eulerZYX(hand_in_body.rotation)
-    ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
-    action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction], [is_terminal]], dtype=np.float32)
-
-    return action_vec
 
 
 def pkl_itr():
