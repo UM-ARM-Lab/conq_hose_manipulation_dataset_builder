@@ -1,6 +1,4 @@
 import pickle
-from scipy.spatial.transform.rotation import Rotation as Rot
-import time
 from pathlib import Path
 
 import cv2
@@ -8,7 +6,7 @@ import numpy as np
 import rerun as rr
 import tensorflow_hub as hub
 from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, GRAV_ALIGNED_BODY_FRAME_NAME
-from bosdyn.client.math_helpers import quat_to_eulerZYX, SE3Pose, Quat
+from bosdyn.client.math_helpers import quat_to_eulerZYX
 from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
 from conq.rerun_utils import viz_common_frames, rr_tform
@@ -27,10 +25,6 @@ def get_first_available_rgb_sources(episode_path):
     with open(episode_path, 'rb') as f:
         data = pickle.load(f)
     return list(data[0]['images'].keys())
-
-def euler_to_quat(roll, pitch, yaw):
-    x, y, z, w = list(Rot.from_euler('XYZ', [roll, pitch, yaw], degrees=False).as_quat())
-    return Quat(w=w, x=x, y=y, z=z)
 
 
 def preprocessor_main():
