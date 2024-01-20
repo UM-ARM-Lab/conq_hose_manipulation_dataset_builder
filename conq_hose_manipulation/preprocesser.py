@@ -39,23 +39,6 @@ def preprocessor_main():
     rr.init('preprocesser')
     rr.connect()
 
-    ############################
-    # # DEBUGGING
-    # rr.log("body", rr.Transform3D())
-    #
-    # hand_in_body = SE3Pose(x=0, y=0.1, z=0.1, rot=euler_to_quat(0, 0, np.pi / 2))
-    # target_hand_in_body = SE3Pose(x=0., y=0.2, z=0.1, rot=euler_to_quat(-0.5, 0, np.pi / 2))
-    # rr_tform("hand_in_body", hand_in_body)
-    # rr_tform("target_hand_in_body", target_hand_in_body)
-    #
-    # delta_hand_in_hand = hand_in_body.inverse() * target_hand_in_body
-    # # hand_in_body @ delta_hand_in_hand == target_hand_in_body
-    #
-    # euler_zyx = quat_to_eulerZYX(delta_hand_in_hand.rotation)
-    # print(f'{delta_hand_in_hand.x:.3f} {delta_hand_in_hand.y:.3f} {delta_hand_in_hand.z:.3f}')
-    # print(f'{euler_zyx[2]:.3f} {euler_zyx[1]:.3f} {euler_zyx[0]:.3f}')
-    ############################
-
     # from facenet_pytorch.models.mtcnn import MTCNN
     # mtcnn = MTCNN(
     #     image_size=160, margin=20, min_face_size=20,

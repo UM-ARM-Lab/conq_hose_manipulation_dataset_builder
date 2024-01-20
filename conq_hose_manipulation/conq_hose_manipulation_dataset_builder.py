@@ -10,9 +10,9 @@ import tensorflow_hub as hub
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.11.0')
+    VERSION = tfds.core.Version('1.12.0')
     RELEASE_NOTES = {
-        '1.11.0': 'use absolute pose of hand in body frame',
+        '1.12.0': 'use absolute pose of hand in body frame',
     }
 
     def __init__(self, *args, **kwargs):
@@ -53,9 +53,9 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                         )
                     }),
                     'action': tfds.features.Tensor(
-                        shape=(9,),
+                        shape=(8,),
                         dtype=np.float32,
-                        doc='[abs position of hand in body, quat w,x,y,z hand in body, 1 gripper, 1 is_terminal].',
+                        doc='[xyz,rpy delta pose of hand in current hand frame, 1 gripper, 1 is_terminal].',
                     ),
                     'discount': tfds.features.Scalar(
                         dtype=np.float32,
@@ -119,7 +119,3 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
         # for smallish datasets, use single-thread parsing
         for sample in episode_paths:
             yield _parse_example(sample)
-
-        # # For large datasets use Apache Beam
-        # beam = tfds.core.lazy_imports.apache_beam
-        # return (beam.Create(episode_paths) | beam.Map(_parse_example))
