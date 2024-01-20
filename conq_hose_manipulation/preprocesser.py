@@ -1,10 +1,14 @@
 import pickle
+from scipy.spatial.transform.rotation import Rotation as Rot
+import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 import rerun as rr
 import tensorflow_hub as hub
+from bosdyn.client.frame_helpers import get_a_tform_b, HAND_FRAME_NAME, VISION_FRAME_NAME, GRAV_ALIGNED_BODY_FRAME_NAME
+from bosdyn.client.math_helpers import quat_to_eulerZYX, SE3Pose, Quat
 from conq.cameras_utils import image_to_opencv, ROTATION_ANGLE, rotate_image
 from conq.data_recorder import get_state_vec
 from conq.rerun_utils import viz_common_frames, rr_tform
@@ -12,16 +16,45 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 
+def pairwise_steps(data):
+    t = 0
+    for i in range(len(data) - 1):
+        yield t, data[i], data[i + 1]
+        t += 1
+
+
 def get_first_available_rgb_sources(episode_path):
     with open(episode_path, 'rb') as f:
         data = pickle.load(f)
     return list(data[0]['images'].keys())
 
+def euler_to_quat(roll, pitch, yaw):
+    x, y, z, w = list(Rot.from_euler('XYZ', [roll, pitch, yaw], degrees=False).as_quat())
+    return Quat(w=w, x=x, y=y, z=z)
+
 
 def preprocessor_main():
-    np.set_printoptions(precision=4, suppress=True, linewidth=220)
+    np.set_printoptions(precision=3, suppress=True, linewidth=220)
+
     rr.init('preprocesser')
     rr.connect()
+
+    ############################
+    # # DEBUGGING
+    # rr.log("body", rr.Transform3D())
+    #
+    # hand_in_body = SE3Pose(x=0, y=0.1, z=0.1, rot=euler_to_quat(0, 0, np.pi / 2))
+    # target_hand_in_body = SE3Pose(x=0., y=0.2, z=0.1, rot=euler_to_quat(-0.5, 0, np.pi / 2))
+    # rr_tform("hand_in_body", hand_in_body)
+    # rr_tform("target_hand_in_body", target_hand_in_body)
+    #
+    # delta_hand_in_hand = hand_in_body.inverse() * target_hand_in_body
+    # # hand_in_body @ delta_hand_in_hand == target_hand_in_body
+    #
+    # euler_zyx = quat_to_eulerZYX(delta_hand_in_hand.rotation)
+    # print(f'{delta_hand_in_hand.x:.3f} {delta_hand_in_hand.y:.3f} {delta_hand_in_hand.z:.3f}')
+    # print(f'{euler_zyx[2]:.3f} {euler_zyx[1]:.3f} {euler_zyx[0]:.3f}')
+    ############################
 
     # from facenet_pytorch.models.mtcnn import MTCNN
     # mtcnn = MTCNN(
@@ -74,20 +107,14 @@ def preprocessor_main():
 
             is_terminal = False
             for t, step in enumerate(data):
+                rr.set_time_sequence('step', rr_seq_t)
+
                 state = step['robot_state']
                 action = step['action']
                 target_open_fraction = action['open_fraction']
-                target_hand_in_body = action['target_hand_in_body']
+                target_hand_in_vision = action['target_hand_in_vision']
                 is_terminal = t >= (len(data) - 1)
-                action_vec = np.array([target_hand_in_body.x,
-                                       target_hand_in_body.y,
-                                       target_hand_in_body.z,
-                                       target_hand_in_body.rotation.w,
-                                       target_hand_in_body.rotation.x,
-                                       target_hand_in_body.rotation.y,
-                                       target_hand_in_body.rotation.z,
-                                       target_open_fraction,
-                                       is_terminal], dtype=np.float32)
+                action_vec = get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction)
                 state_vec = get_state_vec(state)
 
                 snapshot = state.kinematic_state.transforms_snapshot
@@ -113,14 +140,14 @@ def preprocessor_main():
                     # blurred = blur_faces(mtcnn, rgb_np_rot)
                     observation[rgb_src] = rgb_np_rot
 
-                rr.set_time_sequence('step', rr_seq_t)
-                viz_common_frames(snapshot)
-                rr_tform('target_hand_in_body', target_hand_in_body)
                 rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
                 for rgb_src in available_rgb_sources:
                     rr.log(rgb_src, rr.Image(observation[rgb_src]))
 
                 rr_seq_t += 1
+
+                viz_common_frames(snapshot)
+                rr_tform('target_hand_in_vision', target_hand_in_vision)
 
                 episode.append({
                     'observation': observation,
@@ -150,7 +177,6 @@ def preprocessor_main():
                 pickle.dump(sample_i, f)
 
             episode_idx += 1
-            # raise SystemExit()
 
 
 def check_step_for_missing_images(step):
@@ -187,6 +213,22 @@ def blur_faces(mtcnn, rgb_np_rot):
     return rgb_np_rot
 
 
+def get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_open_fraction):
+    snapshot = state.kinematic_state.transforms_snapshot
+    hand_in_vision = get_a_tform_b(snapshot, VISION_FRAME_NAME, HAND_FRAME_NAME)
+    vision_in_body = get_a_tform_b(snapshot, GRAV_ALIGNED_BODY_FRAME_NAME, VISION_FRAME_NAME)
+    hand_in_body = vision_in_body * hand_in_vision
+    target_hand_in_body = vision_in_body * target_hand_in_vision
+    delta_hand_in_hand = hand_in_body.inverse() * target_hand_in_body
+
+    ee_pos = [delta_hand_in_hand.x, delta_hand_in_hand.y, delta_hand_in_hand.z]
+    euler_zyx = quat_to_eulerZYX(delta_hand_in_hand.rotation)
+    ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
+    action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction], [is_terminal]], dtype=np.float32)
+
+    return action_vec
+
+
 def pkl_itr():
     root = Path("/home/pmitrano/Documents/octo_ws/conq_python/data/")
     for mode in ['train', 'val']:
@@ -221,7 +263,7 @@ def check_control_rate():
     w = 10
     df['hz_ma'] = df['hz'].rolling(w).mean()
     df['hz_ma'].plot()
-    plt.ylim([0, 20])
+    plt.ylim([5, 12])
     plt.show()
 
 
