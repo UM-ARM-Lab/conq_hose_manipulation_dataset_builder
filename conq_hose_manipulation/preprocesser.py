@@ -63,6 +63,8 @@ def preprocessor_main():
 
     available_rgb_sources = get_first_available_rgb_sources(episode_paths_dict['train'][0])
 
+    use_rr = False
+
     rr_seq_t = 0
     all_dpos_mags = []
     episode_idx = 0
@@ -84,7 +86,8 @@ def preprocessor_main():
 
             is_terminal = False
             for t, step in enumerate(data):
-                rr.set_time_sequence('step', rr_seq_t)
+                if use_rr:
+                    rr.set_time_sequence('step', rr_seq_t)
 
                 state = step['robot_state']
                 action = step['action']
@@ -117,14 +120,14 @@ def preprocessor_main():
                     # blurred = blur_faces(mtcnn, rgb_np_rot)
                     observation[rgb_src] = rgb_np_rot
 
-                rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
-                for rgb_src in available_rgb_sources:
-                    rr.log(rgb_src, rr.Image(observation[rgb_src]))
+                if use_rr:
+                    rr.log('dpos_mag', rr.TimeSeriesScalar(dpos_mag))
+                    for rgb_src in available_rgb_sources:
+                        rr.log(rgb_src, rr.Image(observation[rgb_src]))
+                    viz_common_frames(snapshot)
+                    rr_tform('target_hand_in_vision', target_hand_in_vision)
 
                 rr_seq_t += 1
-
-                viz_common_frames(snapshot)
-                rr_tform('target_hand_in_vision', target_hand_in_vision)
 
                 episode.append({
                     'observation': observation,
@@ -201,7 +204,7 @@ def get_hand_delta_action_vec(is_terminal, state, target_hand_in_vision, target_
     ee_pos = [delta_hand_in_hand.x, delta_hand_in_hand.y, delta_hand_in_hand.z]
     euler_zyx = quat_to_eulerZYX(delta_hand_in_hand.rotation)
     ee_rpy = [euler_zyx[2], euler_zyx[1], euler_zyx[0]]
-    action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction], [is_terminal]], dtype=np.float32)
+    action_vec = np.concatenate([ee_pos, ee_rpy, [target_open_fraction]], dtype=np.float32)
 
     return action_vec
 

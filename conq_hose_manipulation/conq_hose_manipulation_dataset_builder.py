@@ -10,9 +10,9 @@ import tensorflow_hub as hub
 class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
     """DatasetBuilder for Conq hose manipulation dataset."""
 
-    VERSION = tfds.core.Version('1.12.0')
+    VERSION = tfds.core.Version('1.14.0')
     RELEASE_NOTES = {
-        '1.12.0': 'use absolute pose of hand in body frame',
+        '1.14.0': 'remove the final trunc action so we match the octo pretraining action format',
     }
 
     def __init__(self, *args, **kwargs):
@@ -53,9 +53,9 @@ class ConqHoseManipulation(tfds.core.GeneratorBasedBuilder):
                         )
                     }),
                     'action': tfds.features.Tensor(
-                        shape=(8,),
+                        shape=(7,),
                         dtype=np.float32,
-                        doc='[xyz,rpy delta pose of hand in current hand frame, 1 gripper, 1 is_terminal].',
+                        doc='[xyz,rpy delta pose of hand in current hand frame, 1 gripper].',
                     ),
                     'discount': tfds.features.Scalar(
                         dtype=np.float32,
